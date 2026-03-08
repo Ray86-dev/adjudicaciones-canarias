@@ -1,6 +1,6 @@
 # Adjudicaciones Canarias - Dashboard Interactivo 🇮🇨
 
-Plataforma inteligente y visualizador estadístico de destinos provisionales para docentes en las Islas Canarias. Toma los fríos datos institucionales y los transforma en una experiencia de usuario inmersiva con métricas y gráficas dinámicas.
+Aplicación para consultar, filtrar y visualizar las adjudicaciones provisionales de secundaria de la Consejería de Educación de Canarias. Toma los fríos datos institucionales y los transforma en una experiencia de usuario inmersiva con métricas y gráficas dinámicas.
 
 ## 🌟 Características Principales
 - **Algoritmo Predictor**: Cruza matemáticamente tu número de lista con las vacantes físicas adjudicadas para determinar tu posición (*Safe, Warning o Danger*).
@@ -11,7 +11,7 @@ Plataforma inteligente y visualizador estadístico de destinos provisionales par
 
 El proyecto se divide en dos motores principales:
 1. **El Extractor (Python 🐍)**: Scraping agresivo y purificación de datos extraídos masivamente de los PDF gubernamentales, inyectando posteriormente todo el dataset de forma serializada en nuestro backend.
-2. **El Cerebro Visual (React + Vite ⚛️)**: Una aplicación ultrarrápida (creada con Vite) y potenciada por *Framer Motion* que da fisicalidad a cualquier interacción del dashboard conectándolo en tiempo real a la base de datos distribuida en *Supabase*.
+2. **El Cerebro Visual (React + Vite ⚛️)**: Una aplicación ultrarrápida (creada con Vite) y potenciada por *Framer Motion* que da fisicalidad a cualquier interacción interactiva del dashboard conectándolo en tiempo real a la base de datos centralizada en *Supabase*.
 
 ## 🛠️ Cómo ejecutar el Entorno Local
 
