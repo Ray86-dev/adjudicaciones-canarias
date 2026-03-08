@@ -1,0 +1,18 @@
+# C++
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# Data
+*.csv
+*.pdf
+
+# Node
+node_modules/
+npm-debug.log
+.env
+.env.local
+
+# MacOS OS
+.DS_Store
