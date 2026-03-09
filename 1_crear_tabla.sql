@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS public.adjudicaciones (
     municipio TEXT,
     isla TEXT,
     ambito_preferente TEXT,
-    tipo_comision TEXT
+    tipo_comision TEXT,
+    ambito_islas TEXT
 );
 
 -- Esto permite a cualquiera (incluido el script de Python y tu web) leer e insertar sin autenticación

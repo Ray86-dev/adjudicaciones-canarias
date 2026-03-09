@@ -55,11 +55,25 @@ def parse_page(page, page_num):
         m_dni = re.search(r'(\*{2,4}\d+\*{1,2})', entry)
         dni = m_dni.group(1) if m_dni else ''
         nombre = ''
+        nombre_raw = ''
         if m_dni:
             after_dni = entry[m_dni.end():]
-            m_name = re.match(r'\s+(.+?)\s*(?:Regional|Destino:|No obtiene)', after_dni, re.DOTALL)
+            m_name = re.match(r'\s+(.+?)\s*(?:Regional|Destino:|No obtiene|(?:(?:(?:TF|GC|LP|FU|LZ|GO|HI),)+))', after_dni, re.DOTALL)
             if m_name:
-                nombre = ' '.join(m_name.group(1).split())
+                nombre_raw = m_name.group(1).strip()
+                nombre = ' '.join(nombre_raw.split())
+
+        ambito_islas = ''
+        if nombre_raw:
+            ambito_islas_match = re.search(
+                r'(?:' + re.escape(nombre_raw) + r'.*?)\s+'
+                r'((?:(?:TF|GC|LP|FU|LZ|GO|HI)(?:,(?:TF|GC|LP|FU|LZ|GO|HI))*)|Regional)',
+                entry
+            )
+            ambito_islas = ambito_islas_match.group(1) if ambito_islas_match else ''
+
+        if not ambito_islas and '55, Integrantes' in tipo:
+            ambito_islas = 'Regional'
         cod_centro = centro = municipio = isla = colectivo = tipo_comision = ''
         obtiene_destino = not bool(re.search(r'No obtiene', entry))
         m_dest = re.search(r'Destino:\s*Obtuvo por el colectivo\s*(\d+)\s*-\s*(\d+)\s+(.+?)\((.+?)\s*,\s*(\w+)\)', entry)
@@ -73,7 +87,7 @@ def parse_page(page, page_num):
         ambito_pref = m_pref.group(1) if m_pref else ''
         m_com = re.search(r'Tipo comisión:\s*(.+?)(?:\n|$)', entry)
         tipo_comision = m_com.group(1).strip() if m_com else ''
-        records.append({'orden': orden, 'nombre': nombre_con_iniciales(nombre), 'tipo_participante': tipo, 'especialidad': especialidad, 'obtiene_destino': 'Sí' if obtiene_destino else 'No', 'colectivo': colectivo, 'cod_centro': cod_centro, 'centro': centro, 'municipio': municipio, 'isla': isla, 'ambito_preferente': ambito_pref, 'tipo_comision': tipo_comision})
+        records.append({'orden': orden, 'nombre': nombre_con_iniciales(nombre), 'tipo_participante': tipo, 'especialidad': especialidad, 'obtiene_destino': 'Sí' if obtiene_destino else 'No', 'colectivo': colectivo, 'cod_centro': cod_centro, 'centro': centro, 'municipio': municipio, 'isla': isla, 'ambito_preferente': ambito_pref, 'tipo_comision': tipo_comision, 'ambito_islas': ambito_islas})
     return records
 
 def main():
