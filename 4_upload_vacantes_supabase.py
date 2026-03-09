@@ -1,9 +1,8 @@
 import csv
-import json
 import requests
 import time
 
-URL = "https://dqptchwkulrzcpofuafk.supabase.co/rest/v1/adjudicaciones"
+URL = "https://dqptchwkulrzcpofuafk.supabase.co/rest/v1/vacantes_iniciales"
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxcHRjaHdrdWxyemNwb2Z1YWZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTk1MDcsImV4cCI6MjA4ODU3NTUwN30.IeNQhPV8JkzU69uPb6Smfao_goqUeiOCqdmhg8Cdqm4"
 
 HEADERS = {
@@ -14,33 +13,39 @@ HEADERS = {
 }
 
 def upload_to_supabase():
-    with open('adjudicaciones.csv', mode='r', encoding='utf-8-sig') as f:
+    print("Borrando vacantes antiguas...")
+    res_del = requests.delete(URL + "?id=gt.0", headers=HEADERS)
+    if res_del.status_code not in (200, 204):
+        print(f"Error borrando tabla vacantes_iniciales, quizas aún no está creada: {res_del.text}")
+        return
+
+    with open('vacantes_iniciales.csv', mode='r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         batch = []
         batch_size = 500
         count = 0
         
         for row in reader:
-            # Parse numbers and booleans
-            try:
-                orden_val = int(row['orden']) if row['orden'] else None
-            except:
-                orden_val = None
+            try: comp = int(row['comp'])
+            except: comp = 0
+            try: plant = int(row['plant'])
+            except: plant = 0
+            try: ocup = int(row['ocup'])
+            except: ocup = 0
+            try: vac = int(row['vac'])
+            except: vac = 0
                 
             record = {
-                "orden": orden_val,
-                "nombre": row['nombre'],
-                "tipo_participante": row['tipo_participante'],
-                "especialidad": row['especialidad'],
-                "obtiene_destino": True if row['obtiene_destino'] == 'Sí' else False,
-                "colectivo": row['colectivo'],
+                "curso": row['curso'],
+                "especialidad_cod": row['especialidad_cod'],
+                "especialidad_nombre": row['especialidad_nombre'],
                 "cod_centro": row['cod_centro'],
                 "centro": row['centro'],
-                "municipio": row['municipio'],
                 "isla": row['isla'],
-                "ambito_preferente": row['ambito_preferente'],
-                "tipo_comision": row['tipo_comision'],
-                "ambito_islas": row.get('ambito_islas', '')
+                "comp": comp,
+                "plantilla": plant,
+                "ocupadas": ocup,
+                "vacantes": vac
             }
             batch.append(record)
             
@@ -52,9 +57,9 @@ def upload_to_supabase():
                     count += len(batch)
                     print(f"Subidos {count} registros...")
                 batch = []
+                # Evitar throttling
                 time.sleep(0.5)
 
-        # Upload remaining
         if batch:
             res = requests.post(URL, headers=HEADERS, json=batch)
             if res.status_code not in (200, 201):
@@ -63,7 +68,7 @@ def upload_to_supabase():
                 count += len(batch)
                 print(f"Subidos {count} registros...")
 
-    print("¡Subida completada o finalizada con errores!")
+    print("¡Subida completada!")
 
 if __name__ == "__main__":
     upload_to_supabase()

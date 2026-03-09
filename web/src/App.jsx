@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pi
 import { createClient } from "@supabase/supabase-js";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Loader2, MapPin } from "lucide-react";
+import { ESPECIALIDADES } from "./especialidades.js";
 
 // --- SUPABASE CLIENT ---
 const SUPABASE_URL = "https://dqptchwkulrzcpofuafk.supabase.co";
@@ -177,25 +178,19 @@ const CustomTooltip = ({ active, payload, label }) => {
 // --- MAIN APP ---
 export default function App() {
   const [inputOrden, setInputOrden] = useState("");
-  const [inputEspecialidad, setInputEspecialidad] = useState("");
-  const [especialidadesList, setEspecialidadesList] = useState([]);
+  const [inputEspecialidad, setInputEspecialidad] = useState(ESPECIALIDADES.length > 0 ? ESPECIALIDADES[0] : "");
+  const [especialidadesList, setEspecialidadesList] = useState(ESPECIALIDADES);
   const [availableIslands, setAvailableIslands] = useState(Object.keys(ISLANDS)); // Todas por defecto
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [stats, setStats] = useState(null);
   const [selectedIsland, setSelectedIsland] = useState("TF");
 
   useEffect(() => {
-    const fetchEspecialidades = async () => {
-      const { data } = await supabase.from("adjudicaciones").select("especialidad");
-      if (data) {
-        const unique = [...new Set(data.map(d => d.especialidad).filter(Boolean))];
-        const sorted = unique.sort();
-        setEspecialidadesList(sorted);
-        if (sorted.length > 0) setInputEspecialidad(sorted[0]);
-      }
-    };
-    fetchEspecialidades();
-  }, []);
+    // Especialidades are now statically loaded to bypass 1000-row limit in Supabase
+    if (ESPECIALIDADES.length > 0 && !inputEspecialidad) {
+      setInputEspecialidad(ESPECIALIDADES[0]);
+    }
+  }, [inputEspecialidad]);
 
   const toggleIsland = (code) => {
     setAvailableIslands(prev =>
@@ -211,24 +206,54 @@ export default function App() {
     setStats(null);
 
     setTimeout(async () => {
-      // 1. Cargamos todas las adjudicaciones reales de la especialidad
-      const { data } = await supabase
-        .from("adjudicaciones")
-        .select("*")
-        .eq("especialidad", inputEspecialidad)
-        .eq("obtiene_destino", true);
+      // 1. Cargamos todas las adjudicaciones reales y las vacantes iniciales relacionadas
+      const codEsp = inputEspecialidad.split("-")[0].trim();
+      const [{ data: allAdjudicaciones }, { data: vacantesData }] = await Promise.all([
+        supabase.from("adjudicaciones").select("*").eq("especialidad", inputEspecialidad),
+        supabase.from("vacantes_iniciales").select("*").eq("especialidad_cod", codEsp).eq("curso", "2025-26")
+      ]);
 
-      if (data && data.length > 0) {
+      if (allAdjudicaciones && allAdjudicaciones.length > 0) {
         const myOrden = parseInt(inputOrden);
 
-        // 2. Filtramos el scope de islas elegidas por el usuario
-        const selectedData = data.filter(d => availableIslands.includes(d.isla));
+        // Buscamos si el usuario (myOrden) está en los datos reales y cuál fue su destino
+        const originalUserRecord = allAdjudicaciones.find(d => d.orden === myOrden);
+        const userData = originalUserRecord ? {
+          found: true,
+          obtiene_destino: originalUserRecord.obtiene_destino,
+          centro: originalUserRecord.centro,
+          isla: originalUserRecord.isla,
+          municipio: originalUserRecord.municipio
+        } : { found: false };
 
-        const totalPlazasCanarias = data.length;
+        // Filtramos a los que sí obtuvieron destino para no romper el resto de lógicas
+        const data = allAdjudicaciones.filter(d => d.obtiene_destino);
+
+        const isInterino = (d) => {
+          if (!d.tipo_participante) return false;
+          const match = d.tipo_participante.match(/^(\d+),/);
+          if (match) {
+            const col = parseInt(match[1], 10);
+            return col >= 46 && col <= 55;
+          }
+          return false;
+        };
+        const isCol55 = (d) => !!(d.tipo_participante && d.tipo_participante.startsWith("55,"));
+
+        const interinosData = data.filter(isInterino);
+        const fpData = data.filter(d => !isInterino(d));
+
+        // 2. Filtramos el scope de islas elegidas por el usuario
+        const selectedData = interinosData.filter(d => availableIslands.includes(d.isla));
+
+        const totalPlazasCanarias = interinosData.length;
         const totalPlazasMisIslas = selectedData.length;
 
-        // Corte máximo histórico GENERAL y el Específico de las islas elegidas
-        const maxOrdenGlobal = Math.max(...data.map(d => d.orden || 0));
+        const fpPlazasCanarias = fpData.length;
+        const fpPlazasMisIslas = fpData.filter(d => availableIslands.includes(d.isla)).length;
+
+        // Corte máximo histórico GENERAL y el Específico de las islas elegidas (solo interinos)
+        const maxOrdenGlobal = interinosData.length > 0 ? Math.max(...interinosData.map(d => d.orden || 0)) : 0;
         const maxOrdenMisIslas = selectedData.length > 0 ? Math.max(...selectedData.map(d => d.orden || 0)) : 0;
 
         // --- LOGÍSTICA DE PREDICCIÓN SEGÚN EL FEEDBACK ---
@@ -250,19 +275,50 @@ export default function App() {
           status = "danger";
         }
 
-        // Agrupación de datos para los mapas y charts
+        // Agrupación de datos para los mapas y charts (todo sobre total real, incluyendo fpData para los tipos, pero plazas de probabilidad son sobre interinos)
         const byIsland = {};
         Object.keys(ISLANDS).forEach(i => byIsland[i] = { plazas: 0, orderCut: 0 });
 
         const tipoCounter = {};
-        data.forEach(d => {
+        interinosData.forEach(d => {
           if (d.isla && byIsland[d.isla]) {
             byIsland[d.isla].plazas += 1;
             byIsland[d.isla].orderCut = Math.max(byIsland[d.isla].orderCut, d.orden || 0);
           }
+        });
+
+        // El chart de tipos deberia mostrar toda la gente en tus islas para ser transparente
+        data.forEach(d => {
           if (availableIslands.includes(d.isla) && d.tipo_participante) {
             tipoCounter[d.tipo_participante] = (tipoCounter[d.tipo_participante] || 0) + 1;
           }
+        });
+
+        // Simulación de Cascada (Sprint 4)
+        const cascadeStats = {};
+        Object.keys(ISLANDS).forEach(k => {
+          const islandVacantesIniciales = vacantesData?.filter(v => v.isla === k).reduce((acc, curr) => acc + curr.vacantes, 0) || 0;
+          const islandPrioritarios = fpData.filter(d => d.isla === k).length;
+          const islandVacantesCol55 = Math.max(0, islandVacantesIniciales - islandPrioritarios);
+
+          let competitors = 0;
+          allAdjudicaciones.filter(isCol55).forEach(d => {
+            if (d.orden && d.orden < myOrden) {
+              const ambito = d.ambito_islas || "";
+              // Si fue forzoso, es regional, si eligió, comprueba includes
+              // if 'ambito' is empty, parse_adjudicaciones actually defaulted 55 to Regional
+              if (ambito === "Regional" || (ambito && ambito.includes(k))) {
+                competitors++;
+              }
+            }
+          });
+
+          cascadeStats[k] = {
+            islandVacantesIniciales,
+            islandVacantesCol55,
+            competitors,
+            netDeficit: competitors - islandVacantesCol55
+          };
         });
 
         // Probabilidades refabricadas basadas en volumen para las islas marcadas
@@ -271,8 +327,16 @@ export default function App() {
           if (availableIslands.includes(k)) {
             const islandPlazas = byIsland[k].plazas;
             const cutoff = byIsland[k].orderCut;
+
+            // Refinamiento de la probabilidad si tenemos datos exactos de la cascada
+            const cInfo = cascadeStats[k];
+
             if (cutoff > 0 && islandPlazas > 0) {
               if (myOrden <= islandPlazas) prob = 99;
+              else if (cInfo.competitors < cInfo.islandVacantesCol55 && cInfo.islandVacantesCol55 > 0) {
+                // Estás antes matemáticamente de que se agoten las vacantes
+                prob = 99;
+              }
               else if (myOrden <= cutoff) {
                 // Decay lineal desde 99% hasta el 50% en la frontera del corte real
                 prob = 99 - ((myOrden - islandPlazas) / (cutoff - islandPlazas)) * 49;
@@ -294,15 +358,19 @@ export default function App() {
         setStats({
           totalPlazasCanarias,
           totalPlazasMisIslas,
+          fpPlazasCanarias,
+          fpPlazasMisIslas,
           maxOrdenGlobal,
           maxOrdenMisIslas,
           statusCategory: status, // safe | warning | danger
           myOrden: myOrden,
           espName: inputEspecialidad.split("-").pop().trim(),
           probabilities,
+          cascadeStats,
           islandsData: byIsland,
           tiposData: chartTipos,
-          lastAgreements: selectedData.slice(-10).reverse() // Mostrar de las islas elegidas
+          lastAgreements: selectedData.slice(-10).reverse(), // Mostrar de las islas elegidas (solo interinos)
+          userData: userData
         });
 
         if (probabilities[0]?.prob > 0) setSelectedIsland(probabilities[0].island);
@@ -508,9 +576,35 @@ export default function App() {
 
                     <div style={{ fontSize: 16, color: "#E2E8F0", lineHeight: 1.7, maxWidth: 500 }}>
                       <p style={{ marginBottom: 10 }}>
-                        En estas islas se adjudicaron <strong style={{ color: "#F8FAFC" }}>{stats.totalPlazasMisIslas} plazas</strong> (de un total de {stats.totalPlazasCanarias} en toda Canarias).
+                        En estas islas se adjudicaron <strong style={{ color: "#F8FAFC" }}>{stats.totalPlazasMisIslas} vacantes a interinos</strong> (de un total de {stats.totalPlazasCanarias} en toda Canarias).
                         El último docente general en obtener vacante en las islas marcadas ocupaba el puesto <strong style={{ color: "#60A5FA" }}>#{stats.maxOrdenMisIslas}</strong> en la bolsa.
                       </p>
+
+                      {stats.fpPlazasMisIslas > 0 && (
+                        <p style={{ marginBottom: 10, fontSize: 14, color: "#94A3B8", background: "rgba(255,255,255,0.03)", padding: "10px 14px", borderRadius: 8, borderLeft: "3px solid #64748B" }}>
+                          <strong style={{ color: "#CBD5E1" }}>Dato informativo:</strong> Colectivos prioritarios (Funcionarios en Prácticas, reingresos, etc.) absorbieron {stats.fpPlazasMisIslas} plazas adicionales en tus islas ({stats.fpPlazasCanarias} en total en Canarias), las cuales han sido descontadas para esta proyección.
+                        </p>
+                      )}
+
+                      {/* DESTINO REAL ADJUDICADO (SPRINT 4 EXTENSION) */}
+                      {stats.userData.found && (
+                        <div style={{
+                          marginTop: 20, padding: 16, borderRadius: 12, display: "flex", gap: 14, alignItems: "flex-start",
+                          background: stats.userData.obtiene_destino ? "rgba(139,92,246,0.15)" : "rgba(100,116,139,0.15)",
+                          border: stats.userData.obtiene_destino ? "1px solid rgba(139,92,246,0.4)" : "1px solid rgba(100,116,139,0.4)",
+                          boxShadow: stats.userData.obtiene_destino ? "0 0 20px rgba(139,92,246,0.1) inset" : "none"
+                        }}>
+                          <span style={{ color: stats.userData.obtiene_destino ? "#A78BFA" : "#94A3B8", fontSize: 24, lineHeight: 1 }}>{stats.userData.obtiene_destino ? "🎯" : "ℹ️"}</span>
+                          <span style={{ fontSize: 15 }}>
+                            <strong style={{ display: "block", color: stats.userData.obtiene_destino ? "#A78BFA" : "#94A3B8", marginBottom: 4, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.1em" }}>Datos de la Consejería</strong>
+                            {stats.userData.obtiene_destino ? (
+                              <>El docente en tu posición de lista <strong>obtuvo un destino real</strong> en estos procesos de adjudicación: <strong style={{ color: "#FFF" }}>{stats.userData.centro} ({stats.userData.municipio}, {ISLANDS[stats.userData.isla]?.name || stats.userData.isla})</strong>.</>
+                            ) : (
+                              <>El docente en tu posición {stats.myOrden} <strong>no obtuvo ningún destino</strong> en este periodo procedimental, quedándose sin vacante asignada.</>
+                            )}
+                          </span>
+                        </div>
+                      )}
 
                       {/* CARTAS DE RESOLUCION */}
                       {stats.statusCategory === "safe" && (
@@ -528,7 +622,7 @@ export default function App() {
                           <span style={{ color: "#F59E0B", fontSize: 24, lineHeight: 1 }}>⚡</span>
                           <span style={{ fontSize: 15 }}>
                             <strong style={{ display: "block", color: "#F59E0B", marginBottom: 4, fontSize: 16 }}>Dependencia de terceros</strong>
-                            Estás por encima de tu cuota directa de vacantes, y tu entrada ha dependido de que aquellos por encima de ti no hayan solicitado estas islas, o por renuncias y comisiones directas. Existen posibilidades matemáticas, pero hay riesgo.
+                            Tu número de orden supera las vacantes netas disponibles en tus islas. El modelo marca riesgo matemático porque tu plaza no estaba asegurada de inicio y <strong>dependías obligatoriamente de renuncias o elecciones de otras islas</strong> por parte de los que estaban por encima de ti. (Nota: que el modelo advierta de riesgo no significa que no pudieras entrar, la cascada posterior de renuncias afortunadamente sí dio lugares por encima del corte).
                           </span>
                         </div>
                       )}
@@ -541,6 +635,34 @@ export default function App() {
                             Tu orden de lista supera con creces el último corte registrado en estas islas para el volumen de participantes general. Tu asignación requeriría un volumen anómalo de renuncias de personas por encima de ti para conseguir la cobertura.
                           </span>
                         </div>
+                      )}
+
+                      {/* TRANSPARENCIA CASCADA (SPRINT 4) */}
+                      {stats.probabilities[0] && availableIslands.includes(stats.probabilities[0].island) && (
+                        (() => {
+                          const bestIsland = stats.probabilities[0];
+                          const cData = stats.cascadeStats[bestIsland.island];
+                          if (!cData || cData.islandVacantesIniciales === 0) return null;
+                          return (
+                            <div style={{ marginTop: 24, padding: "18px 20px", background: "rgba(59,130,246,0.05)", borderRadius: 12, border: "1px solid rgba(59,130,246,0.2)" }}>
+                              <strong style={{ display: "flex", alignItems: "center", gap: 8, color: "#60A5FA", marginBottom: 12, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>
+                                Transparencia de Motor: Análisis de {bestIsland.name}
+                              </strong>
+                              <p style={{ fontSize: 14, color: "#CBD5E1", margin: 0, lineHeight: 1.6 }}>
+                                De los interinos que eligieron opciones en <strong>{bestIsland.name}</strong>, exactamente <strong style={{ color: "#FFF" }}>{cData.competitors}</strong> estaban por delante de tu puesto {stats.myOrden}.<br />
+                                Esta isla tenía <strong>{cData.islandVacantesCol55}</strong> vacantes netas disponibles para interinos.<br />
+                                <span style={{ display: "block", marginTop: 8, paddingLeft: 12, borderLeft: "2px solid rgba(255,255,255,0.1)" }}>
+                                  {cData.competitors > cData.islandVacantesCol55 ? (
+                                    <span>Al haber <strong style={{ color: "#F87171" }}>{cData.competitors} competidores {'>'} {cData.islandVacantesCol55} vacantes</strong>, significa que <strong>{cData.competitors - cData.islandVacantesCol55} docentes</strong> por delante de ti rebotaron en esta isla. Afortunadamente, algunos de ellos habrán sido asignados a sus otras opciones (GC, LZ, etc.), lo que permite que la lista siga corriendo a tu favor.</span>
+                                  ) : (
+                                    <span>Tus <strong style={{ color: "#34D399" }}>{cData.competitors} competidores {'<'} {cData.islandVacantesCol55} vacantes</strong>. Esto significa que sobraban vacantes. Tienes plaza garantizada pura matemáticamente sin depender de arrastres.</span>
+                                  )}
+                                </span>
+                              </p>
+                            </div>
+                          );
+                        })()
                       )}
                     </div>
                   </div>
